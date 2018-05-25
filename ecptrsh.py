@@ -1,16 +1,27 @@
 #! /usr/bin/python
 # by pts@fazekas.hu at Thu May 24 14:48:52 CEST 2018
+#
+# TODO(pts): Add autodetection of Python.
 
-"""copystrap: Copy encrypted data between 2 computers using transfer.sh"""
+"""ecptrsh: copy encrypted data to a new computer using transfer.sh
+
+Python versions supported: 2.6 and 2.7.
+"""
+
+if __import__('sys').version_info[:2] < (2, 6):
+  # hashlib needs >=2.5 and ssl needs >=2.6.
+  import sys
+  sys.stderr.write('ecptrsh: fatal: Python >=2.6 needed\n')
+  sys.exit(120)
 
 import base64
 import hashlib
+import httplib
 import os
 import re
 import socket
 import struct
 import sys
-import httplib
 
 # ---
 
@@ -46,7 +57,7 @@ def send_http_request(url, data=None, put_data=None, timeout=None):
   path = url[match.end():] or '/'
   ipaddr = socket.gethostbyname(host)  # Force IPv4. Needed by Mega.
   hc_cls = (httplib.HTTPConnection, httplib.HTTPSConnection)[schema == 'https']
-  # TODO(pts): Cleanup: Call hc.close() eventually.
+  # TODO(pts): Cleanup: Call hc.close() (or hr.close()?) eventually.
   if sys.version_info < (2, 6):  # Python 2.5 doesn't support timeout.
     hc = hc_cls(ipaddr, port)
   else:
@@ -162,7 +173,7 @@ def use_fake_transfer_sh(_files={}):
 
 def curve25519_scalarmult(n, p=None):
   """Curve25519 key exchange (curve25519-donna).
-  
+
   Implementation based on
   https://github.com/pts/py_ssh_keygen_ed25519/blob/master/curve25519_compact.py
   """
@@ -290,16 +301,53 @@ assert chacha20_encrypt(
 assert chacha20_encrypt(
     '\xeb\xe78\xad\xd5\xab\x18R\xe2O~', 'chacha20!') == 'Hello World'
 
+
 # ---
+
+
+def urandom(n):
+  """Return a string of n random bytes."""
+  import random
+  rr = random.randrange
+  return ''.join(chr(rr(256)) for _ in xrange(n))
+
+
+try:
+  if len(os.urandom(3)) == 3:
+    urandom = os.urandom  # Faster and higher quality.
+except (AttributeError, OSError, IOError, ValueError):
+  pass
+
+# ---
+
+msgin, msgout = sys.stdin, sys.stderr
+
+def init_msg_tty():
+  global msgin, msgout
+  if msgin is msgout:  # Already set.
+    return
+  try:
+    msgout2 = open('/dev/tty', 'r+')
+  except IOError:
+    return
+  msgin = msgout = msgout2
+
+
+def prompt_read_line(prompt):
+  msgout.write(prompt)
+  msgout.flush()
+  line = msgin.readline()
+  if not line:
+    raise EOFError('EOF when reading reply to prompt.')
+  return line.rstrip('\r\n')
+
 
 SEND_DATA_RE = re.compile('SPK=([a-zA-Z0-9+/]{43}=)\n\n')
 
 
-def main(argv):
-  use_fake_transfer_sh()  # !! Make it optional.
-
+def simulate():
   # Done by the receiver.
-  recv_private = os.urandom(32)
+  recv_private = urandom(32)
   recv_public =  curve25519_scalarmult(recv_private)
   recv_token = upload_to_transfer_sh(recv_public, 'r')
   print [recv_token]  # Send recv_token to the sender.
@@ -308,14 +356,14 @@ def main(argv):
   data = 'No news today.'
   recv_public2 = download_from_transfer_sh(recv_token, 'r', expected_size=32)
   assert recv_public == recv_public2
-  send_private = os.urandom(32)
+  send_private = urandom(32)
   send_public =  curve25519_scalarmult(send_private)
   key = curve25519_scalarmult(send_private, recv_public2)
   data_encrypted = chacha20_encrypt(digest32(data) + data, key)
   send_data = 'SPK=%s\n\n%s' % (base64.b64encode(send_public), data_encrypted)
   send_token = upload_to_transfer_sh(send_data, 's')
   print [send_token]  # Send send_token to the receiver.
-  
+
   # Done by the receiver.
   send_data2 = download_from_transfer_sh(send_token, 's')
   match = SEND_DATA_RE.match(send_data2)
@@ -332,7 +380,115 @@ def main(argv):
     raise ValueError('Corrupt data: digest does not match.')
   print [key, data]
   print [key2, data3]
+  assert data == data3
+
+
+class UsageError(ValueError):
+  """Raised when problem in argv."""
+
+
+class FatalError(ValueError):
+  """Raised on a fatal error which does not need a traceback."""
+
+
+def get_usage(argv0):
+  return (
+      'ecptrsh: copy encrypted data to a new computer using transfer.sh\n'
+      'This is free software, GNU GPL >=2.0. There is NO WARRANTY. Use at your risk.\n'
+      'Usage: %s send [<filename>]\n'
+      '       %s receive > <filename>\n'
+      '       %s simulate [--real]\n'
+      ).replace('%s', argv0)
+
+
+def main(argv):
+  if len(argv) < 2 or argv[1] in ('help', '--help'):
+    sys.stderr.write(get_usage((argv or ('ecptrsh',))[0]))
+  elif argv[1] in ('receive', 'recv'):
+    init_msg_tty()
+    if len(argv) > 2:
+      raise UsageError('Too many command-line arguments.')
+    recv_private = urandom(32)
+    recv_public =  curve25519_scalarmult(recv_private)
+    recv_token = upload_to_transfer_sh(recv_public, 'r')
+    print >>msgout, 'ecptrsh: receiver token is: %s' % recv_token
+    print >>msgout, 'ecptrsh: info: start `ecptrsh send\' on the peer, type the receiver token above there, and look for the sender token it prints'
+    try:
+      send_token = prompt_read_line('ecptrsh: Enter sender token: ')
+    except EOFError, e:
+      raise FatalError(str(e))
+    if not send_token:
+      raise ValueError('Empty send token.')
+    if not TR_TOKEN_RE.match(send_token):
+      raise ValueEerror('Invalid send token: %s' % send_token)
+    send_data2 = download_from_transfer_sh(send_token, 's')
+    match = SEND_DATA_RE.match(send_data2)
+    if not match:
+      raise ValueError('Invalid send_data.')
+    send_public2 = base64.b64decode(match.group(1))
+    data_encrypted2 = send_data2[match.end():]
+    key2 = curve25519_scalarmult(recv_private, send_public2)
+    data2 = chacha20_encrypt(data_encrypted2, key2)
+    if len(data2) < 32:
+      raise ValueError('Encrypted data too short.')
+    print >>msgout, 'ecptrsh: received %d bytes of data' % (
+        len(data2) - 32)
+    data3 = data2[32:]
+    if digest32(data3) != data2[:32]:
+      raise ValueError('Corrupt data: digest does not match.')
+    sys.stdout.write(data3)
+    sys.stdout.flush()
+  elif argv[1] == 'send':
+    init_msg_tty()
+    if len(argv) > 3:
+      raise UsageError('Too many command-line arguments.')
+    if len(argv) == 3:
+      f = open(argv[2], 'rb')
+    else:
+      f = sys.stdin
+    try:
+      print >>msgout, 'ecptrsh: info: start `ecptrsh receive\' on the peer, and look for the receiver token it prints'
+      try:
+        recv_token = prompt_read_line('ecptrsh: Enter receiver token: ')
+      except EOFError, e:
+        raise FatalError(str(e))
+      recv_public2 = download_from_transfer_sh(
+          recv_token, 'r', expected_size=32)
+      send_private = urandom(32)
+      send_public =  curve25519_scalarmult(send_private)
+      key = curve25519_scalarmult(send_private, recv_public2)
+      if f is sys.stdin and os.isatty(sys.stdin.fileno()):
+        print >>msgout, 'ecptrsh: reading data from stdin...'
+      data = f.read()
+    finally:
+      if f is not sys.stdin:
+        f.close()
+    print >>msgout, 'ecptrsh: uploading %d bytes of data' % len(data)
+    data_encrypted = chacha20_encrypt(digest32(data) + data, key)
+    send_data = 'SPK=%s\n\n%s' % (base64.b64encode(send_public), data_encrypted)
+    send_token = upload_to_transfer_sh(send_data, 's')
+    print >>msgout, 'ecptrsh: sender token is: %s' % send_token
+  elif argv[1] == 'simulate':
+    if len(argv) > 2 and argv[2] == '--real':
+      del argv[2]
+    else:
+      use_fake_transfer_sh()
+    if len(argv) > 2:
+      raise UsageError('Too many command-line arguments.')
+    simulate()
+  else:
+    raise UsageError('Unknown command: %s' % argv[1])
 
 
 if __name__ == '__main__':
-  sys.exit(main(sys.argv))
+  try:
+    sys.exit(main(sys.argv))
+  except UsageError, e:
+    print >>msgout, 'ecptrsh: usage error: %s' % e
+    sys.exit(1)
+  except FatalError, e:
+    print >>msgout, 'ecptrsh: fatal: %s' % e
+    sys.exit(2)
+  except KeyboardInterrupt, e:
+    print >>msgout, '\necptrsh: interrupted'
+    sys.exit(3)
