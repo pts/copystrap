@@ -4,7 +4,7 @@ copystrap is a collection of shell and Python scripts for Unix to
 conveniently copy data in an end-to-end encrypted way to a newly installed
 computer. The reason why copystrap is more convenient than rsync or scp is
 that rsync and scp need working SSH client credentials (e.g. private keys or
-passwords) on the target computer, and they may also need a intermediate
+passwords) on the target computer, and they may also need an intermediate
 computer in many firewall setups.
 
 copystrap contains the following scripts:
@@ -17,6 +17,22 @@ copystrap contains the following scripts:
 
   If the website https://transfer.sh/ is down, or you don't even want to
   upload encrypted files to a thrid-party site, use ecplmdr instead.
+
+  To send, download ecptrsh first: run any of:
+
+    $ wget -nv https://github.com/pts/copystrap/raw/master/ecptrsh
+    $ curl -LO https://github.com/pts/copystrap/raw/master/ecptrsh
+
+  To send, run:
+
+    $ sh ecptrsh send FILENAME
+
+  To receive, run any of:
+
+    $ sh ecptrsh receive >OUT
+    $ wget -qO- https://github.com/pts/copystrap/raw/master/ecptrsh | sh >OUT
+    $ curl -Ls  https://github.com/pts/copystrap/raw/master/ecptrsh | sh >OUT
+    $ busybox wget -qO- https://github.com/pts/ecptrsh/raw/master/ecptrsh | busybox sh >OUT
 
 * ecplmdr: Uses a USB pen drive or any other manual file copy method to copy
   the data and store it temporarily. Files copied between computers are
