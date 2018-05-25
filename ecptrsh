@@ -1,19 +1,46 @@
-#! /usr/bin/python
-# by pts@fazekas.hu at Thu May 24 14:48:52 CEST 2018
+#! /bin/sh --
+# ecptrsh: copy encrypted data to a new computer using transfer.sh
+# This is free software, GNU GPL >=2.0. There is NO WARRANTY. Use at your risk.
 #
-# TODO(pts): Add autodetection of Python.
+# To send, run:
+#
+#   $ ./ecptrsh send FILENAME
+#
+# To receive, run any of:
+#
+#   $ ./ecptrsh receive >OUT
+#   $ wget -qO- https://github.com/pts/copystrap/raw/master/ecptrsh | sh >OUT
+#   $ curl -Ls  https://github.com/pts/copystrap/raw/master/ecptrsh | sh >OUT
+#   $ busybox wget -qO- https://github.com/pts/ecptrsh/raw/master/ecptrsh | busybox sh >OUT
+#
 
-"""ecptrsh: copy encrypted data to a new computer using transfer.sh
-
-Python versions supported: 2.6 and 2.7.
-"""
-
-if __import__('sys').version_info[:2] < (2, 6):
-  # hashlib needs >=2.5 and ssl needs >=2.6.
-  import sys
-  sys.stderr.write('ecptrsh: fatal: Python >=2.6 needed\n')
-  sys.exit(120)
-
+if true; then  # Read entire script before running it.
+test "$ZSH_VERSION" && builtin setopt shwordsplit 2>/dev/null
+unset PYCODE PYTHON DK TARGET ARGV0
+ARGV0="$0"
+CMD=
+if test "${0%sh}" != "$0" && test $# = 0; then  # wget /ecptrsh | sh
+  # Dash and busybox sh don't support this:
+  # test -z "$BASH_SOURCE" && test -z "$ZSH_SCRIPT"
+  # This is for interactive SSH in `curl ... | sh'
+  ARGV0=ecptrsh
+  CMD=receive
+fi
+die() {
+  echo "ecptrsh: fatal: $*" >&2
+  exit 2
+}
+PYCODE='import base64, hashlib, os, struct, sys, ssl; ssl.wrap_socket; print base64.b64encode(hashlib.sha256(struct.pack(">H", int(os.getenv("HK")))).digest().encode("hex").upper().decode("hex"))'
+PYTHON=
+# python2.5 and python2.4 usually don't work because ssl does not exist.
+for PYTHON in python python2 python2.7 python2.6 python2.5 python2.4; do
+  TARGET="$(HK=26740 "$PYTHON" -c "$PYCODE" 2>/dev/null)"
+  test "$?" = 0 && test "$TARGET" = cS3VjiKwvKBA/JJQA4+Egn+FWTq5eOWW7XWzuki9GyM= && break
+  PYTHON=
+done
+test "$PYTHON" || die 'working Python not found'
+# TODO(pts): Make the Python script shorter, to make it fit to the environment.
+PYCODE='
 import base64
 import hashlib
 import httplib
@@ -29,15 +56,15 @@ import sys
 # with incorrect root certificates.
 # https://ptspts.blogspot.com/2016/11/how-to-fix-python-ssl-errors-when.html
 import ssl as __ssl
-__ssl.wrap_socket = __import__('functools').partial(
+__ssl.wrap_socket = __import__("functools").partial(
     __ssl.wrap_socket, ssl_version=__ssl.PROTOCOL_TLSv1)
-if getattr(__ssl, '_create_unverified_context', None):
+if getattr(__ssl, "_create_unverified_context", None):
   __ssl._create_default_https_context = __ssl._create_unverified_context
 del __ssl
 
 # ---
 
-URL_RE = re.compile(r'([a-z0-9]+)://([^/:@?#]+)(?::(\d+))?')
+URL_RE = re.compile(r"([a-z0-9]+)://([^/:@?#]+)(?::(\d+))?")
 
 
 def send_http_request(url, data=None, put_data=None, timeout=None):
@@ -45,34 +72,33 @@ def send_http_request(url, data=None, put_data=None, timeout=None):
   .status, .reason, .getheaders(), .getheader(...), .read()."""
   match = URL_RE.match(url)
   if not match:
-    raise ValueError('Bad URL: %s' % url)
+    raise ValueError("Bad URL: %s" % url)
   schema = match.group(1)
-  if schema not in ('http', 'https'):
-    raise ValueError('Unknown schema: %s' % schema)
+  if schema not in ("http", "https"):
+    raise ValueError("Unknown schema: %s" % schema)
   host = match.group(2)
   if match.group(3):
     port = int(match.group(3))
   else:
-    port = (80, 443)[schema == 'https']
-  path = url[match.end():] or '/'
+    port = (80, 443)[schema == "https"]
+  path = url[match.end():] or "/"
   ipaddr = socket.gethostbyname(host)  # Force IPv4. Needed by Mega.
-  hc_cls = (httplib.HTTPConnection, httplib.HTTPSConnection)[schema == 'https']
-  # TODO(pts): Cleanup: Call hc.close() (or hr.close()?) eventually.
-  if sys.version_info < (2, 6):  # Python 2.5 doesn't support timeout.
+  hc_cls = (httplib.HTTPConnection, httplib.HTTPSConnection)[schema == "https"]
+  if sys.version_info < (2, 6):  # Python 2.5 doesn"t support timeout.
     hc = hc_cls(ipaddr, port)
   else:
     hc = hc_cls(ipaddr, port, timeout=timeout)
-  headers = {'host': host}
+  headers = {"host": host}
   if put_data is not None:
-    headers.setdefault('content-type', 'application/octet-stream')
+    headers.setdefault("content-type", "application/octet-stream")
     if data is not None:
-      raise ValueError('Both data= and put_data= specified.')
-    hc.request('PUT', path, put_data, headers)
+      raise ValueError("Both data= and put_data= specified.")
+    hc.request("PUT", path, put_data, headers)
   elif data is not None:
-    headers.setdefault('content-type', 'application/x-www-form-urlencoded')
-    hc.request('POST', path, data, headers)
+    headers.setdefault("content-type", "application/x-www-form-urlencoded")
+    hc.request("POST", path, data, headers)
   else:
-    hc.request('GET', path, None, headers)
+    hc.request("GET", path, None, headers)
   return hc.getresponse()  # HTTPResponse.
 
 
@@ -80,64 +106,64 @@ def send_http_request(url, data=None, put_data=None, timeout=None):
 
 
 # https://github.com/dutchcoders/transfer.sh/blob/master/server/codec.go
-TR_TOKEN_RE_STR = r'[0-9a-zA-Z]{2,10}'
+TR_TOKEN_RE_STR = r"[0-9a-zA-Z]{2,10}"
 
-TR_TOKEN_RE = re.compile(TR_TOKEN_RE_STR + r'\Z')
+TR_TOKEN_RE = re.compile(TR_TOKEN_RE_STR + r"\Z")
 
 TR_DL_URL_RE = re.compile(
-    r'https://([^/:@?#]+)/(' + TR_TOKEN_RE_STR + ')/(?s)(.*)\Z')
+    r"https://([^/:@?#]+)/(" + TR_TOKEN_RE_STR + ")/(?s)(.*)\Z")
 
 
-def upload_to_transfer_sh(data, filename='t', host='transfer.sh'):
+def upload_to_transfer_sh(data, filename="t", host="transfer.sh"):
   # TODO(pts): Escape filename.
   # TODO(pts): Escape host?
   hr = send_http_request(
-      'https://%s/%s' % (host, filename), put_data=data)
+      "https://%s/%s" % (host, filename), put_data=data)
   try:
     if hr.status != 200:
-      raise ValueError('HTTP request failed: %s %s' % (hr.status, hr.reason))
-    if hr.getheader('content-type') != 'text/plain':
+      raise ValueError("HTTP request failed: %s %s" % (hr.status, hr.reason))
+    if hr.getheader("content-type") != "text/plain":
       raise ValueError(
-          'Unexpected response content-type: %s' % hr.getheader('content-type'))
-    content_length = int(hr.getheader('content-length') or 0)
+          "Unexpected response content-type: %s" % hr.getheader("content-type"))
+    content_length = int(hr.getheader("content-length") or 0)
     if not 12 <= content_length - len(host) - len(filename) <= 20:
-      raise ValueError('Unexpected response content-length: %s' %
+      raise ValueError("Unexpected response content-length: %s" %
                        content_length)
     body = hr.read()
     if len(body) != content_length:
-      raise ValueError('Inconsistent response body and content-length.')
+      raise ValueError("Inconsistent response body and content-length.")
     # https://github.com/dutchcoders/transfer.sh/blob/master/server/codec.go
     match = TR_DL_URL_RE.match(body)
     if not match:
-      raise ValueError('Invalid transfer.sh download URL: %s' % body)
+      raise ValueError("Invalid transfer.sh download URL: %s" % body)
     if match.group(1) != host or match.group(3) != filename:
-      raise ValueError('Bad values in transfer.sh download URL: %s' % body)
+      raise ValueError("Bad values in transfer.sh download URL: %s" % body)
     return match.group(2)  # token.
   finally:
     hr.close()
 
 
 def download_from_transfer_sh(
-    token, filename='t', host='transfer.sh', expected_size=None):
+    token, filename="t", host="transfer.sh", expected_size=None):
   """Returns the full file data downloaded."""
   if not TR_TOKEN_RE.match(token):
-    raise ValueError('Invalid token: %s', token)
-  url = 'https://%s/%s/%s' % (host, token, filename)
+    raise ValueError("Invalid token: %s", token)
+  url = "https://%s/%s/%s" % (host, token, filename)
   hr = send_http_request(url)
   try:
     if hr.status != 200:
-      raise ValueError('HTTP request failed: %s %s' % (hr.status, hr.reason))
-    content_length = int(hr.getheader('content-length') or 0)
+      raise ValueError("HTTP request failed: %s %s" % (hr.status, hr.reason))
+    content_length = int(hr.getheader("content-length") or 0)
     if expected_size is not None and expected_size != content_length:
-      raise ValueError('Bad data size: expected=%d got=%d' %
+      raise ValueError("Bad data size: expected=%d got=%d" %
                        (expected_size, content_length))
-    cd = hr.getheader('content-disposition') or ''
-    if cd != 'attachment; filename="%s"' % filename:
-      raise ValueError('Unexpected response content-disposition: %s' % cd)
-    # Ignore hr.getheader('content-type'). Can also be empty ('').
+    cd = hr.getheader("content-disposition") or ""
+    if cd != "attachment; filename=\"%s\"" % filename:
+      raise ValueError("Unexpected response content-disposition: %s" % cd)
+    # Ignore hr.getheader("content-type"). Can also be empty ("").
     body = hr.read()
     if len(body) != content_length:
-      raise ValueError('Inconsistent response body and content-length.')
+      raise ValueError("Inconsistent response body and content-length.")
   finally:
     hr.close()
   return body
@@ -147,11 +173,11 @@ def use_fake_transfer_sh(_files={}):
   """Use an in-memory fake transfer.sh storage. Useful for testing."""
 
   global upload_to_transfer_sh
-  def upload_to_transfer_sh(data, filename='t', host='transfer.sh'):
+  def upload_to_transfer_sh(data, filename="t", host="transfer.sh"):
     data = str(data)
     while 1:
       token = str(len(_files))
-      key = '%s/%s/%s' % (host, token, filename)
+      key = "%s/%s/%s" % (host, token, filename)
       _files.setdefault(key, data)
       if _files[key] == data:
         break
@@ -160,11 +186,11 @@ def use_fake_transfer_sh(_files={}):
 
   global download_from_transfer_sh
   def download_from_transfer_sh(
-      token, filename='t', host='transfer.sh', expected_size=None):
-    key = '%s/%s/%s' % (host, token, filename)
+      token, filename="t", host="transfer.sh", expected_size=None):
+    key = "%s/%s/%s" % (host, token, filename)
     data = _files.get(key)
     if data is None:
-      raise KeyError('Missing token key: %s' % key)
+      raise KeyError("Missing token key: %s" % key)
     return data
 
 
@@ -180,14 +206,14 @@ def curve25519_scalarmult(n, p=None):
   # n is a group element string, p is a string representing an integer. Both
   # are 32 bytes.
   if len(n) != 32:
-    raise ValueError('Invalid Curve25519 n.')
+    raise ValueError("Invalid Curve25519 n.")
   if p is None:
     u = 9
   else:
     if len(p) != 32:
-      raise ValueError('Invalid Curve25519 p.')
-    u = int(p[::-1].encode('hex'), 16)
-  k = (int(n[::-1].encode('hex'), 16) & ~(1 << 255 | 7)) | 1 << 254
+      raise ValueError("Invalid Curve25519 p.")
+    u = int(p[::-1].encode("hex"), 16)
+  k = (int(n[::-1].encode("hex"), 16) & ~(1 << 255 | 7)) | 1 << 254
   ql, x1, x2, z2, x3, z3, do_swap = (1 << 255) - 19, u, 1, 0, u, 1, 0
   for t in xrange(254, -1, -1):
     kt = (k >> t) & 1
@@ -204,7 +230,7 @@ def curve25519_scalarmult(n, p=None):
     z2 = e * (aa + 121665 * e) % ql
   if do_swap:
     x2, x3, z2, z3 = x3, x2, z3, z2
-  return ('%064x' % ((x2 * pow(z2, ql - 2, ql)) % ql)).decode('hex')[::-1]
+  return ("%064x" % ((x2 * pow(z2, ql - 2, ql)) % ql)).decode("hex")[::-1]
 
 
 # --- Digest.
@@ -223,7 +249,7 @@ def yield_chacha20_xor_stream(key, iv, position=0):
   if not isinstance(position, (int, long)):
     raise TypeError
   if position & ~0xffffffff:
-    raise ValueError('Position is not uint32.')
+    raise ValueError("Position is not uint32.")
   if not isinstance(key, str):
     raise TypeError
   if not isinstance(iv, str):
@@ -248,9 +274,9 @@ def yield_chacha20_xor_stream(key, iv, position=0):
 
   ctx = [0] * 16
   ctx[:4] = (1634760805, 857760878, 2036477234, 1797285236)
-  ctx[4 : 12] = struct.unpack('<8L', key)
+  ctx[4 : 12] = struct.unpack("<8L", key)
   ctx[12] = ctx[13] = position
-  ctx[14 : 16] = struct.unpack('<LL', iv)
+  ctx[14 : 16] = struct.unpack("<LL", iv)
   while 1:
     x = list(ctx)
     for i in xrange(10):
@@ -262,7 +288,7 @@ def yield_chacha20_xor_stream(key, iv, position=0):
       quarter_round(x, 1, 6, 11, 12)
       quarter_round(x, 2, 7,  8, 13)
       quarter_round(x, 3, 4,  9, 14)
-    for c in struct.pack('<16L', *(
+    for c in struct.pack("<16L", *(
         (x[i] + ctx[i]) & 0xffffffff for i in xrange(16))):
       yield ord(c)
     ctx[12] = (ctx[12] + 1) & 0xffffffff
@@ -278,28 +304,28 @@ def chacha20_encrypt(data, key, iv=None, position=0):
   if not isinstance(data, str):
     raise TypeError
   if iv is None:
-    iv = '\0' * 8
+    iv = "\0" * 8
   if isinstance(key, str):
     if not key:
-      raise ValueError('Key is empty.')
+      raise ValueError("Key is empty.")
     if len(key) < 32:
       # TODO(pts): Do key derivation with PBKDF2 or something similar.
       key = (key * (32 / len(key) + 1))[:32]
     if len(key) > 32:
-      raise ValueError('Key too long.')
+      raise ValueError("Key too long.")
 
   def yield_chars(data, it):
     for i in data:
       yield chr(ord(i) ^ it.next())
 
-  return ''.join(yield_chars(
+  return "".join(yield_chars(
       data, yield_chacha20_xor_stream(key, iv, position)))
 
 
 assert chacha20_encrypt(
-    'Hello World', 'chacha20!') == '\xeb\xe78\xad\xd5\xab\x18R\xe2O~'
+    "Hello World", "chacha20!") == "\xeb\xe78\xad\xd5\xab\x18R\xe2O~"
 assert chacha20_encrypt(
-    '\xeb\xe78\xad\xd5\xab\x18R\xe2O~', 'chacha20!') == 'Hello World'
+    "\xeb\xe78\xad\xd5\xab\x18R\xe2O~", "chacha20!") == "Hello World"
 
 
 # ---
@@ -309,7 +335,7 @@ def urandom(n):
   """Return a string of n random bytes."""
   import random
   rr = random.randrange
-  return ''.join(chr(rr(256)) for _ in xrange(n))
+  return "".join(chr(rr(256)) for _ in xrange(n))
 
 
 try:
@@ -327,7 +353,7 @@ def init_msg_tty():
   if msgin is msgout:  # Already set.
     return
   try:
-    msgout2 = open('/dev/tty', 'r+')
+    msgout2 = open("/dev/tty", "r+")
   except IOError:
     return
   msgin = msgout = msgout2
@@ -338,46 +364,46 @@ def prompt_read_line(prompt):
   msgout.flush()
   line = msgin.readline()
   if not line:
-    raise EOFError('EOF when reading reply to prompt.')
-  return line.rstrip('\r\n')
+    raise EOFError("EOF when reading reply to prompt.")
+  return line.rstrip("\r\n")
 
 
-SEND_DATA_RE = re.compile('SPK=([a-zA-Z0-9+/]{43}=)\n\n')
+SEND_DATA_RE = re.compile("SPK=([a-zA-Z0-9+/]{43}=)\n\n")
 
 
 def simulate():
   # Done by the receiver.
   recv_private = urandom(32)
   recv_public =  curve25519_scalarmult(recv_private)
-  recv_token = upload_to_transfer_sh(recv_public, 'r')
+  recv_token = upload_to_transfer_sh(recv_public, "r")
   print [recv_token]  # Send recv_token to the sender.
 
   # Done by the sender.
-  data = 'No news today.'
-  recv_public2 = download_from_transfer_sh(recv_token, 'r', expected_size=32)
+  data = "No news today."
+  recv_public2 = download_from_transfer_sh(recv_token, "r", expected_size=32)
   assert recv_public == recv_public2
   send_private = urandom(32)
   send_public =  curve25519_scalarmult(send_private)
   key = curve25519_scalarmult(send_private, recv_public2)
   data_encrypted = chacha20_encrypt(digest32(data) + data, key)
-  send_data = 'SPK=%s\n\n%s' % (base64.b64encode(send_public), data_encrypted)
-  send_token = upload_to_transfer_sh(send_data, 's')
+  send_data = "SPK=%s\n\n%s" % (base64.b64encode(send_public), data_encrypted)
+  send_token = upload_to_transfer_sh(send_data, "s")
   print [send_token]  # Send send_token to the receiver.
 
   # Done by the receiver.
-  send_data2 = download_from_transfer_sh(send_token, 's')
+  send_data2 = download_from_transfer_sh(send_token, "s")
   match = SEND_DATA_RE.match(send_data2)
   if not match:
-    raise ValueError('Invalid send_data.')
+    raise ValueError("Invalid send_data.")
   send_public2 = base64.b64decode(match.group(1))
   data_encrypted2 = send_data2[match.end():]
   key2 = curve25519_scalarmult(recv_private, send_public2)
   data2 = chacha20_encrypt(data_encrypted2, key2)
   if len(data2) < 32:
-    raise ValueError('Encrypted data too short.')
+    raise ValueError("Encrypted data too short.")
   data3 = data2[32:]
   if digest32(data3) != data2[:32]:
-    raise ValueError('Corrupt data: digest does not match.')
+    raise ValueError("Corrupt data: digest does not match.")
   print [key, data]
   print [key2, data3]
   assert data == data3
@@ -393,102 +419,108 @@ class FatalError(ValueError):
 
 def get_usage(argv0):
   return (
-      'ecptrsh: copy encrypted data to a new computer using transfer.sh\n'
-      'This is free software, GNU GPL >=2.0. There is NO WARRANTY. Use at your risk.\n'
-      'Usage: %s send [<filename>]\n'
-      '       %s receive > <filename>\n'
-      '       %s simulate [--real]\n'
-      ).replace('%s', argv0)
+      "ecptrsh: copy encrypted data to a new computer using transfer.sh\n"
+      "This is free software, GNU GPL >=2.0. There is NO WARRANTY. Use at your risk.\n"
+      "Usage: %s send [<filename>]\n"
+      "       %s receive > <filename>\n"
+      "       %s simulate [--real]\n"
+      ).replace("%s", argv0)
 
 
 def main(argv):
-  if len(argv) < 2 or argv[1] in ('help', '--help'):
-    sys.stderr.write(get_usage((argv or ('ecptrsh',))[0]))
-  elif argv[1] in ('receive', 'recv'):
+  argv0 = (argv or ("ecptrsh",))[0]
+  if len(argv) > 1 and argv[1].startswith("--argv0="):
+    argv0 = argv.pop(1).split("=", 1)[1]
+  if len(argv) < 2 or argv[1] in ("help", "--help"):
+    sys.stderr.write(get_usage(argv0))
+  elif argv[1] in ("receive", "recv"):
     init_msg_tty()
     if len(argv) > 2:
-      raise UsageError('Too many command-line arguments.')
+      raise UsageError("Too many command-line arguments.")
     recv_private = urandom(32)
     recv_public =  curve25519_scalarmult(recv_private)
-    recv_token = upload_to_transfer_sh(recv_public, 'r')
-    print >>msgout, 'ecptrsh: receiver token is: %s' % recv_token
-    print >>msgout, 'ecptrsh: info: start `ecptrsh send\' on the peer, type the receiver token above there, and look for the sender token it prints'
+    recv_token = upload_to_transfer_sh(recv_public, "r")
+    print >>msgout, "ecptrsh: receiver token is: %s" % recv_token
+    print >>msgout, "ecptrsh: info: start `ecptrsh send\x27 on the peer, type the receiver token above there, and look for the sender token it prints"
     try:
-      send_token = prompt_read_line('ecptrsh: Enter sender token: ')
+      send_token = prompt_read_line("ecptrsh: Enter sender token: ")
     except EOFError, e:
       raise FatalError(str(e))
     if not send_token:
-      raise ValueError('Empty send token.')
+      raise ValueError("Empty send token.")
     if not TR_TOKEN_RE.match(send_token):
-      raise ValueEerror('Invalid send token: %s' % send_token)
-    send_data2 = download_from_transfer_sh(send_token, 's')
+      raise ValueEerror("Invalid send token: %s" % send_token)
+    send_data2 = download_from_transfer_sh(send_token, "s")
     match = SEND_DATA_RE.match(send_data2)
     if not match:
-      raise ValueError('Invalid send_data.')
+      raise ValueError("Invalid send_data.")
     send_public2 = base64.b64decode(match.group(1))
     data_encrypted2 = send_data2[match.end():]
     key2 = curve25519_scalarmult(recv_private, send_public2)
     data2 = chacha20_encrypt(data_encrypted2, key2)
     if len(data2) < 32:
-      raise ValueError('Encrypted data too short.')
-    print >>msgout, 'ecptrsh: received %d bytes of data' % (
+      raise ValueError("Encrypted data too short.")
+    print >>msgout, "ecptrsh: received %d bytes of data" % (
         len(data2) - 32)
     data3 = data2[32:]
     if digest32(data3) != data2[:32]:
-      raise ValueError('Corrupt data: digest does not match.')
+      raise ValueError("Corrupt data: digest does not match.")
     sys.stdout.write(data3)
     sys.stdout.flush()
-  elif argv[1] == 'send':
+  elif argv[1] == "send":
     init_msg_tty()
     if len(argv) > 3:
-      raise UsageError('Too many command-line arguments.')
+      raise UsageError("Too many command-line arguments.")
     if len(argv) == 3:
-      f = open(argv[2], 'rb')
+      f = open(argv[2], "rb")
     else:
       f = sys.stdin
     try:
-      print >>msgout, 'ecptrsh: info: start `ecptrsh receive\' on the peer, and look for the receiver token it prints'
+      print >>msgout, "ecptrsh: info: start `ecptrsh receive\x27 on the peer, and look for the receiver token it prints"
       try:
-        recv_token = prompt_read_line('ecptrsh: Enter receiver token: ')
+        recv_token = prompt_read_line("ecptrsh: Enter receiver token: ")
       except EOFError, e:
         raise FatalError(str(e))
       recv_public2 = download_from_transfer_sh(
-          recv_token, 'r', expected_size=32)
+          recv_token, "r", expected_size=32)
       send_private = urandom(32)
       send_public =  curve25519_scalarmult(send_private)
       key = curve25519_scalarmult(send_private, recv_public2)
       if f is sys.stdin and os.isatty(sys.stdin.fileno()):
-        print >>msgout, 'ecptrsh: reading data from stdin...'
+        print >>msgout, "ecptrsh: reading data from stdin..."
       data = f.read()
     finally:
       if f is not sys.stdin:
         f.close()
-    print >>msgout, 'ecptrsh: uploading %d bytes of data' % len(data)
+    print >>msgout, "ecptrsh: uploading %d bytes of data" % len(data)
     data_encrypted = chacha20_encrypt(digest32(data) + data, key)
-    send_data = 'SPK=%s\n\n%s' % (base64.b64encode(send_public), data_encrypted)
-    send_token = upload_to_transfer_sh(send_data, 's')
-    print >>msgout, 'ecptrsh: sender token is: %s' % send_token
-  elif argv[1] == 'simulate':
-    if len(argv) > 2 and argv[2] == '--real':
+    send_data = "SPK=%s\n\n%s" % (base64.b64encode(send_public), data_encrypted)
+    send_token = upload_to_transfer_sh(send_data, "s")
+    print >>msgout, "ecptrsh: sender token is: %s" % send_token
+  elif argv[1] == "simulate":
+    if len(argv) > 2 and argv[2] == "--real":
       del argv[2]
     else:
       use_fake_transfer_sh()
     if len(argv) > 2:
-      raise UsageError('Too many command-line arguments.')
+      raise UsageError("Too many command-line arguments.")
     simulate()
   else:
-    raise UsageError('Unknown command: %s' % argv[1])
+    raise UsageError("Unknown command: %s" % argv[1])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
   try:
     sys.exit(main(sys.argv))
   except UsageError, e:
-    print >>msgout, 'ecptrsh: usage error: %s' % e
+    print >>msgout, "ecptrsh: usage error: %s" % e
     sys.exit(1)
   except FatalError, e:
-    print >>msgout, 'ecptrsh: fatal: %s' % e
+    print >>msgout, "ecptrsh: fatal: %s" % e
     sys.exit(2)
   except KeyboardInterrupt, e:
-    print >>msgout, '\necptrsh: interrupted'
+    print >>msgout, "\necptrsh: interrupted"
     sys.exit(3)
+'
+exec "$PYTHON" -c "$PYCODE" --argv0="$ARGV0" $CMD "$@"
+fi
