@@ -4,11 +4,11 @@
 #
 # To send, run:
 #
-#   $ ./ecptrsh send FILENAME
+#   $ sh ecptrsh send FILENAME
 #
 # To receive, run any of:
 #
-#   $ ./ecptrsh receive >OUT
+#   $ sh ecptrsh receive >OUT
 #   $ wget -qO- https://github.com/pts/copystrap/raw/master/ecptrsh | sh >OUT
 #   $ curl -Ls  https://github.com/pts/copystrap/raw/master/ecptrsh | sh >OUT
 #   $ busybox wget -qO- https://github.com/pts/ecptrsh/raw/master/ecptrsh | busybox sh >OUT
@@ -19,7 +19,7 @@ test "$ZSH_VERSION" && builtin setopt shwordsplit 2>/dev/null
 unset PYCODE PYTHON DK TARGET ARGV0
 ARGV0="$0"
 CMD=
-if test "${0%sh}" != "$0" && test $# = 0; then  # wget /ecptrsh | sh
+if test "${0%trsh}" = "$0" && test $# = 0; then  # wget -qO- .../ecptrsh | sh
   # Dash and busybox sh don't support this:
   # test -z "$BASH_SOURCE" && test -z "$ZSH_SCRIPT"
   # This is for interactive SSH in `curl ... | sh'
