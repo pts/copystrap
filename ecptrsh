@@ -370,6 +370,8 @@ def prompt_read_line(prompt):
   msgout.flush()
   line = msgin.readline()
   if not line:
+    msgout.write("\n")
+    msgout.flush()
     raise EOFError("EOF when reading reply to prompt.")
   return line.rstrip("\r\n")
 
