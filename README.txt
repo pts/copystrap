@@ -87,6 +87,8 @@ Dependencies of copystrap:
 * A Unix system: Linux, macOS, FreeBSD or something similar.
 * (for ecptrsh) Python 2.7 or 2.6.
 * (for ecplmdr) Python 2.7, 2.6, 2.5 or 2.4.
+  If Python 2.4 is used, then the external hashlib package (from PyPi) also
+  has to be installed.
 * A Bourne shell. Bash, Zsh, Dash and Busybox sh all work.
 * (optional) curl or wget for the single-command receiver.
 * (for ecptrsh): The https://transfer.sh/ website up, working, and reachable
