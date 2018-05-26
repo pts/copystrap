@@ -31,7 +31,7 @@ if test "${0%trsh}" = "$0" && test $# = 0; then  # wget -qO- .../ecptrsh | sh
   ARGV0=ecptrsh
   CMD=receive
 fi
-PYCODE='import base64, hashlib, os, struct, sys, ssl; ssl.wrap_socket; print base64.b64encode(hashlib.sha256(struct.pack(">H", int(os.getenv("HK")))).digest().encode("hex").upper().decode("hex"))'
+PYCODE='import base64, hashlib, httplib, os, struct, sys, ssl; ssl.wrap_socket; print base64.b64encode(hashlib.sha256(struct.pack(">H", int(os.getenv("HK")))).digest().encode("hex").upper().decode("hex"))'
 PYTHON=
 # python2.5 and python2.4 usually don't work because ssl does not exist.
 for PYTHON in python python2 python2.7 python2.6 python2.5 python2.4; do
