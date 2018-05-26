@@ -26,10 +26,6 @@ if test "${0%trsh}" = "$0" && test $# = 0; then  # wget -qO- .../ecptrsh | sh
   ARGV0=ecptrsh
   CMD=receive
 fi
-die() {
-  echo "ecptrsh: fatal: $*" >&2
-  exit 2
-}
 PYCODE='import base64, hashlib, os, struct, sys, ssl; ssl.wrap_socket; print base64.b64encode(hashlib.sha256(struct.pack(">H", int(os.getenv("HK")))).digest().encode("hex").upper().decode("hex"))'
 PYTHON=
 # python2.5 and python2.4 usually don't work because ssl does not exist.
@@ -38,7 +34,10 @@ for PYTHON in python python2 python2.7 python2.6 python2.5 python2.4; do
   test "$?" = 0 && test "$TARGET" = cS3VjiKwvKBA/JJQA4+Egn+FWTq5eOWW7XWzuki9GyM= && break
   PYTHON=
 done
-test "$PYTHON" || die 'working Python not found'
+if test -z "$PYTHON"; then
+  echo "ecptrsh: fatal: working Python 2 not found" >&2
+  exit 2
+fi
 # TODO(pts): Make the Python script shorter, to make it fit to the environment.
 PYCODE='
 import base64
