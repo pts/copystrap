@@ -40,7 +40,26 @@ copystrap contains the following scripts:
 
   Abbreviaton of: Encrypted Copy using a Locally-Mounted Drive.
 
-  This script hasn't been implemented yet.
+  Start the receiver first. The default receive locations (DIR) are any
+  writable mounted filesystems within /media/ .
+
+  To receive, mount your USB pen drive to DIR, and run any of:
+
+    $ sh ecplmdr receive --in DIR >OUT
+    $ sh ecplmdr receive >OUT
+    $ wget -qO- https://github.com/pts/copystrap/raw/master/ecplmdr | sh >OUT
+    $ curl -Ls  https://github.com/pts/copystrap/raw/master/ecplmdr | sh >OUT
+    $ busybox wget -qO- https://github.com/pts/ecplmdr/raw/master/ecplmdr | busybox sh >OUT
+
+  To send, download ecplmdr first: run any of:
+
+    $ wget -nv https://github.com/pts/copystrap/raw/master/ecplmdr
+    $ curl -LO https://github.com/pts/copystrap/raw/master/ecplmdr
+
+  To send, move the USB pen drive to the sender, mount it to DIR, and run any of:
+
+    $ sh ecplmdr send FILENAME
+    $ sh ecplmdr send --in DIR FILENAME
 
 Why is copystrap more convenient than SSH-based copy tools such as rsync and
 scp?
@@ -66,7 +85,8 @@ Why is copystrap more convenient than copying the file to a USB pen drive?
 Dependencies of copystrap:
 
 * A Unix system: Linux, macOS, FreeBSD or something similar.
-* Python 2.6 or 2.7.
+* (for ecptrsh) Python 2.7 or 2.6.
+* (for ecplmdr) Python 2.7, 2.6, 2.5 or 2.4.
 * A Bourne shell. Bash, Zsh, Dash and Busybox sh all work.
 * (optional) curl or wget for the single-command receiver.
 * (for ecptrsh): The https://transfer.sh/ website up, working, and reachable
