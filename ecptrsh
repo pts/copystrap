@@ -1,5 +1,7 @@
 #! /bin/sh --
-# ecptrsh: copy encrypted data to a new computer using transfer.sh
+
+""":" # ecptrsh: copy encrypted data to a new computer using transfer.sh
+#
 # This is free software, GNU GPL >=2.0. There is NO WARRANTY. Use at your risk.
 #
 # To send, run:
@@ -13,10 +15,13 @@
 #   $ curl -Ls  https://github.com/pts/copystrap/raw/master/ecptrsh | sh >OUT
 #   $ busybox wget -qO- https://github.com/pts/ecptrsh/raw/master/ecptrsh | busybox sh >OUT
 #
+# This file is a magic script: it works as `sh ecptrsh ...' (recommended),
+# `python ecptrsh ...' and `cat ecptrsh | sh'.
+#
 
-if true; then  # Read entire script before running it.
+if true; then  # Read entire shell script before running it.
 test "$ZSH_VERSION" && builtin setopt shwordsplit 2>/dev/null
-unset PYCODE PYTHON DK TARGET ARGV0
+unset PYCODE PYTHON DK TARGET ARGV0 CMD  # Prevent accidental export.
 ARGV0="$0"
 CMD=
 if test "${0%trsh}" = "$0" && test $# = 0; then  # wget -qO- .../ecptrsh | sh
@@ -39,7 +44,9 @@ if test -z "$PYTHON"; then
   exit 2
 fi
 # TODO(pts): Make the Python script shorter, to make it fit to the environment.
-PYCODE='
+# The Python script below must not contain the character '
+export PYCODE='#"""
+
 import base64
 import hashlib
 import httplib
@@ -520,6 +527,5 @@ if __name__ == "__main__":
   except KeyboardInterrupt, e:
     print >>msgout, "\necptrsh: interrupted"
     sys.exit(3)
-'
-exec "$PYTHON" -c "$PYCODE" --argv0="$ARGV0" $CMD "$@"
-fi
+
+';exec "$PYTHON" -c "exec __import__(\"os\").getenv(\"PYCODE\")" --argv0="$ARGV0" $CMD "$@"; fi #'
