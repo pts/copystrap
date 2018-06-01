@@ -1,0 +1,463 @@
+#! /bin/sh --
+
+""":" # ecplcnw: copy encrypted data to a new computer using the local network
+#
+# This is free software, GNU GPL >=2.0. There is NO WARRANTY. Use at your risk.
+#
+# Starting the receiver first is more secure.
+#
+# To receive, run any of:
+#
+#   $ sh ecplcnw receive >OUT
+#   $ wget -qO- https://github.com/pts/copystrap/raw/master/ecplcnw | sh >OUT
+#   $ curl -Ls  https://github.com/pts/copystrap/raw/master/ecplcnw | sh >OUT
+#   $ busybox wget -qO- https://github.com/pts/ecplcnw/raw/master/ecplcnw | busybox sh >OUT
+#
+# To send, run any of:
+#
+#   $ sh ecplcnw send --id TRANSFERIDPREFIX FILENAME
+#   $ sh ecplcnw send -FILENAME
+#
+# This file is a magic script: it works as `sh ecplcnw ...' (recommended),
+# `python ecplcnw ...' and `cat ecplcnw | sh'.
+#
+
+if true; then  # Read entire shell script before running it.
+test "$ZSH_VERSION" && builtin setopt shwordsplit 2>/dev/null
+unset PYCODE PYTHON DK TARGET ARGV0 CMD  # Prevent accidental export.
+ARGV0="$0"
+CMD=
+if test "${0%lcnw}" = "$0" && test $# = 0; then  # wget -qO- .../ecplcnw | sh
+  # Dash and busybox sh don't support this:
+  # test -z "$BASH_SOURCE" && test -z "$ZSH_SCRIPT"
+  # This is for interactive SSH in `curl ... | sh'
+  ARGV0=ecplcnw
+  CMD=receive
+fi
+PYCODE='import base64, hashlib, os, socket, struct, sys, time; socket.SO_BROADCAST; time.time(); print base64.b64encode(hashlib.sha256(struct.pack(">H", int(os.getenv("HK")))).digest().encode("hex").upper().decode("hex"))'
+PYTHON=
+# python2.5 and python2.4 usually don't work because ssl does not exist.
+for PYTHON in python python2 python2.7 python2.6 python2.5 python2.4; do
+  TARGET="$(HK=26740 "$PYTHON" -c "$PYCODE" 2>/dev/null)"
+  test "$?" = 0 && test "$TARGET" = cS3VjiKwvKBA/JJQA4+Egn+FWTq5eOWW7XWzuki9GyM= && break
+  PYTHON=
+done
+if test -z "$PYTHON"; then
+  echo "ecplcnw: fatal: working Python 2 not found" >&2
+  exit 2
+fi
+# TODO(pts): Make the Python script shorter, to make it fit to the environment.
+# The Python script below must not contain the character '
+export PYCODE='#"""
+
+import base64
+import hashlib
+import os
+import re
+import socket
+import struct
+import sys
+import time
+
+# ---
+
+
+def curve25519_scalarmult(n, p=None):
+  """Curve25519 key exchange (curve25519-donna).
+
+  Implementation based on
+  https://github.com/pts/py_ssh_keygen_ed25519/blob/master/curve25519_compact.py
+  """
+  # n is a group element string, p is a string representing an integer. Both
+  # are 32 bytes.
+  if len(n) != 32:
+    raise ValueError("Invalid Curve25519 n.")
+  if p is None:
+    u = 9
+  else:
+    if len(p) != 32:
+      raise ValueError("Invalid Curve25519 p.")
+    u = int(p[::-1].encode("hex"), 16)
+  k = (int(n[::-1].encode("hex"), 16) & ~(1 << 255 | 7)) | 1 << 254
+  ql, x1, x2, z2, x3, z3, do_swap = (1 << 255) - 19, u, 1, 0, u, 1, 0
+  for t in xrange(254, -1, -1):
+    kt = (k >> t) & 1
+    if do_swap ^ kt:
+      x2, x3, z2, z3 = x3, x2, z3, z2
+    do_swap = kt
+    a, b = (x2 + z2) % ql, (x2 - z2) % ql
+    aa, bb = (a * a) % ql, (b * b) % ql
+    c, d = (x3 + z3) % ql, (x3 - z3) % ql
+    da, cb = d * a % ql, c * b % ql
+    d1, d2 = da + cb, da - cb
+    x3, z3 = d1 * d1 % ql, x1 * d2 * d2 % ql
+    x2, e = aa * bb % ql, (aa - bb) % ql
+    z2 = e * (aa + 121665 * e) % ql
+  if do_swap:
+    x2, x3, z2, z3 = x3, x2, z3, z2
+  return ("%064x" % ((x2 * pow(z2, ql - 2, ql)) % ql)).decode("hex")[::-1]
+
+
+# --- Digest.
+
+
+def digest32(data):
+  """Returns a 32-byte message digest."""
+  return hashlib.sha256(data).digest()
+
+
+# --- ChaCha20 symmetric cipher implementation.
+
+
+def yield_chacha20_xor_stream(key, iv, position=0):
+  """Generate the xor stream with the ChaCha20 cipher."""
+  if not isinstance(position, (int, long)):
+    raise TypeError
+  if position & ~0xffffffff:
+    raise ValueError("Position is not uint32.")
+  if not isinstance(key, str):
+    raise TypeError
+  if not isinstance(iv, str):
+    raise TypeError
+  if len(key) != 32:
+    raise ValueError
+  if len(iv) != 8:
+    raise ValueError
+
+  def rotate(v, c):
+    return ((v << c) & 0xffffffff) | v >> (32 - c)
+
+  def quarter_round(x, a, b, c, d):
+    x[a] = (x[a] + x[b]) & 0xffffffff
+    x[d] = rotate(x[d] ^ x[a], 16)
+    x[c] = (x[c] + x[d]) & 0xffffffff
+    x[b] = rotate(x[b] ^ x[c], 12)
+    x[a] = (x[a] + x[b]) & 0xffffffff
+    x[d] = rotate(x[d] ^ x[a], 8)
+    x[c] = (x[c] + x[d]) & 0xffffffff
+    x[b] = rotate(x[b] ^ x[c], 7)
+
+  ctx = [0] * 16
+  ctx[:4] = (1634760805, 857760878, 2036477234, 1797285236)
+  ctx[4 : 12] = struct.unpack("<8L", key)
+  ctx[12] = ctx[13] = position
+  ctx[14 : 16] = struct.unpack("<LL", iv)
+  while 1:
+    x = list(ctx)
+    for i in xrange(10):
+      quarter_round(x, 0, 4,  8, 12)
+      quarter_round(x, 1, 5,  9, 13)
+      quarter_round(x, 2, 6, 10, 14)
+      quarter_round(x, 3, 7, 11, 15)
+      quarter_round(x, 0, 5, 10, 15)
+      quarter_round(x, 1, 6, 11, 12)
+      quarter_round(x, 2, 7,  8, 13)
+      quarter_round(x, 3, 4,  9, 14)
+    for c in struct.pack("<16L", *(
+        (x[i] + ctx[i]) & 0xffffffff for i in xrange(16))):
+      yield ord(c)
+    ctx[12] = (ctx[12] + 1) & 0xffffffff
+    if ctx[12] == 0:
+      ctx[13] = (ctx[13] + 1) & 0xffffffff
+
+
+def chacha20_encrypt(data, key, iv=None, position=0):
+  """Encrypt (or decrypt) with the ChaCha20 cipher.
+
+  Based on: https://github.com/pts/chacha20/blob/master/chacha20.py
+  """
+  if not isinstance(data, str):
+    raise TypeError
+  if iv is None:
+    iv = "\0" * 8
+  if isinstance(key, str):
+    if not key:
+      raise ValueError("Key is empty.")
+    if len(key) < 32:
+      # TODO(pts): Do key derivation with PBKDF2 or something similar.
+      key = (key * (32 / len(key) + 1))[:32]
+    if len(key) > 32:
+      raise ValueError("Key too long.")
+
+  def yield_chars(data, it):
+    for i in data:
+      yield chr(ord(i) ^ it.next())
+
+  return "".join(yield_chars(
+      data, yield_chacha20_xor_stream(key, iv, position)))
+
+
+assert chacha20_encrypt(
+    "Hello World", "chacha20!") == "\xeb\xe78\xad\xd5\xab\x18R\xe2O~"
+assert chacha20_encrypt(
+    "\xeb\xe78\xad\xd5\xab\x18R\xe2O~", "chacha20!") == "Hello World"
+
+
+# ---
+
+
+def urandom(n):
+  """Return a string of n random bytes."""
+  import random
+  rr = random.randrange
+  return "".join(chr(rr(256)) for _ in xrange(n))
+
+
+try:
+  if len(os.urandom(3)) == 3:
+    urandom = os.urandom  # Faster and higher quality.
+except (AttributeError, OSError, IOError, ValueError):
+  pass
+
+# ---
+
+msgin, msgout = sys.stdin, sys.stderr
+
+def init_msg_tty():
+  global msgin, msgout
+  if msgin is msgout:  # Already set.
+    return
+  try:
+    msgout2 = open("/dev/tty", "r+")
+  except IOError:
+    return
+  msgin = msgout = msgout2
+
+
+class UsageError(ValueError):
+  """Raised when problem in argv."""
+
+
+class FatalError(ValueError):
+  """Raised on a fatal error which does not need a traceback."""
+
+
+def parse_transfer_id(arg):
+  try:
+    arg = str(arg).decode("hex")
+  except (ValueError, TypeError):
+    raise UsageError("transfer-id --id value must be a hex string")
+  if len(arg) > 32:
+    raise UsageError("transfer-id --id value must be at most 64 hex digits long")
+  return arg
+
+
+def get_usage(argv0):
+  return (
+      "ecplcnw: copy encrypted data to a new computer using the local network\n"
+      "This is free software, GNU GPL >=2.0. There is NO WARRANTY. Use at your risk.\n"
+      "Usage: %s send [--id <transfer-id>] [<filename>]\n"
+      "       %s receive [--id <transfer-id>] > <filename>\n"
+      ).replace("%s", argv0)
+
+
+UDP_PORT = 48396
+HEADER = "ecplcnw!"
+
+
+def main(argv):
+  argv0 = (argv or ("ecplcnw",))[0]
+  transfer_id = None
+  if len(argv) > 1 and argv[1].startswith("--argv0="):
+    argv0 = argv.pop(1).split("=", 1)[1]
+  if len(argv) < 2 or argv[1] in ("help", "--help"):
+    sys.stderr.write(get_usage(argv0))
+  elif argv[1] in ("receive", "recv"):
+    init_msg_tty()
+    if len(argv) > 3 and argv[2] == "--id":
+      transfer_id = parse_transfer_id(argv[3])
+      del argv[2 : 4]
+    if len(argv) > 2:
+      raise UsageError("too many command-line arguments")
+    if transfer_id in (None, ""):
+      transfer_id = urandom(32)
+    else:
+      # Repeat it at make it 32 bytes long.
+      transfer_id = (transfer_id * ((32 + len(transfer_id) - 1) / len(transfer_id)))[:32]
+    recv_private = urandom(32)
+    recv_public =  curve25519_scalarmult(recv_private)
+    print >>msgout, "ecplcnw: info: transfer-id is: %s" % transfer_id.encode("hex")
+    print >>msgout, "ecplcnw: info: start `ecplcnw send --id %s\x27 on the sender" % transfer_id[:4].encode("hex")
+
+    ssock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    ssock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    ssock.bind(("", 0))  # Any port.
+    print >>sys.stderr, "ecplcnw: info: receiver listening in TCP *:%d" % ssock.getsockname()[1]
+    ssock.listen(16)
+    ssock.settimeout(1)
+    tcp_port = ssock.getsockname()[1]
+    broadcast_msg = struct.pack(">8s32s32sH", HEADER, transfer_id, recv_public, tcp_port)
+    usock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    usock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    print >>sys.stderr, "ecplcnw: sending broadcast UDP packet of %d data bytes and waiting for incoming data" % len(broadcast_msg)
+    had_timeout = False
+    while 1:
+      usock.sendto(broadcast_msg, ("255.255.255.255", UDP_PORT))  # Arrives.
+      try:
+        sock, addr = ssock.accept()
+      except socket.timeout:
+        if not had_timeout:
+          ssock.settimeout(0.3)
+          had_timeout = True
+        sys.stderr.write(".")
+        sys.stderr.flush()
+        continue
+      except (IOError, OSError, socket.error), e:
+        if not had_timeout:
+          ssock.settimeout(0.3)
+          had_timeout = True
+        sys.stderr.write("!")  # TODO(pts): Report error message.
+        sys.stderr.flush()
+        time.sleep(0.1)
+        continue
+      if had_timeout:
+        sys.stderr.write("\n")
+        sys.stderr.flush()
+        had_timeout = False
+      try:
+        buf = ""
+        while len(buf) < 40:
+          data = sock.recv(40 - len(buf))  # TODO(pts): Apply timeout.
+          if not data:
+            print >>sys.stderr, "ecplcnw: incoming data too short"
+            break
+          buf += data
+          if not HEADER.startswith(buf[:8]):
+            print >>sys.stderr, "ecplcnw: incoming data has bad header"
+            buf = ""
+            break
+        if len(buf) != 40:
+          continue
+        send_public2 = buf[8:]
+        buf = []
+        while 1:
+          # TODO(pts): Do not read too much from untrusted source.
+          data = sock.recv(32768)
+          if not data:
+            break
+          buf.append(data)
+        buf = "".join(buf)
+      finally:
+        sock.close()
+      if len(buf) < 64:
+        print >>sys.stderr, "ecplcnw: incoming encrypted data too short"
+        continue
+      key2 = curve25519_scalarmult(recv_private, send_public2)
+      print >>sys.stderr, "ecplcnw: info: using key-id: %s" % digest32(key2).encode("hex")
+      data2 = chacha20_encrypt(buf, key2)
+      del buf
+      print >>msgout, "ecplcnw: received %d bytes of data" % (
+          len(data2) - 64)
+      if data2[32 : 64] != transfer_id:
+        print >>sys.stderr, "ecplcnw: unexpected transfer-id"
+        continue
+      if digest32(buffer(data2, 32)) != data2[:32]:
+        print >>sys.stderr, "ecplcnw: corrupt data: digest does not match"
+        continue
+      data3 = data2[64:]
+      del data2
+      break
+    sys.stdout.write(data3)
+    sys.stdout.flush()
+  elif argv[1] == "send":
+    init_msg_tty()
+    if len(argv) > 3 and argv[2] == "--id":
+      transfer_id = parse_transfer_id(argv[3])
+      del argv[2 : 4]
+    if not transfer_id:
+      transfer_id = ""
+    if len(argv) > 3:
+      raise UsageError("too many command-line arguments")
+    if len(argv) == 3:
+      f = open(argv[2], "rb")
+    else:
+      f = sys.stdin
+    try:
+      if transfer_id:
+        print >>msgout, "ecplcnw: info: start `ecplcnw receive --id %s\x27 on the peer" % transfer_id.encode("hex")
+      else:
+        print >>msgout, "ecplcnw: info: start `ecplcnw receive\x27 on the peer"
+      # TODO(pts): Close sock and usock in a finally block.
+      usock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+      usock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+      had_timeout = False
+      usock.settimeout(1)
+      # TODO(pts): Report nice error if this fails.
+      usock.bind(("0", UDP_PORT))
+      print >>sys.stderr, "ecplcnw: waiting for receiver to broadcast over UDP"
+      while 1:
+        try:
+          data, addr = usock.recvfrom(75)
+        except socket.timeout:
+          if not had_timeout:
+            usock.settimeout(0.1)
+            had_timeout = True
+          sys.stderr.write(".")
+          sys.stderr.flush()
+          continue
+        except (IOError, OSError, socket.error):
+          if not had_timeout:
+            ssock.settimeout(0.1)
+            had_timeout = True
+          sys.stderr.write("!")  # TODO(pts): Report error message.
+          sys.stderr.flush()
+          time.sleep(0.1)
+          continue
+        if had_timeout:
+          sys.stderr.write("\n")
+          sys.stderr.flush()
+          had_timeout = False
+        if len(data) != 74:
+          print >>sys.stderr, "ecplcnw: UDP packet from receiver too short"
+          continue
+        header, transfer_id2, recv_public2, tcp_port = struct.unpack(">8s32s32sH", data)
+        if header != HEADER:
+          print >>sys.stderr, "ecplcnw: UDP packet from receiver contains bad header"
+          continue
+        if not (1024 <= tcp_port <= 65535):
+          print >>sys.stderr, "ecplcnw: UDP packet from receiver contains bad TCP port"
+          continue
+        if not transfer_id2.startswith(transfer_id):
+          print >>sys.stderr, "ecplcnw: UDP packet from receiver contains mismatching transfer-id"
+          continue
+        break
+      print >>msgout, "ecplcnw: info: using transfer-id: %s" % transfer_id2.encode("hex")
+      print >>sys.stderr, "ecplcnw: connecting to receiver TCP %s:%d" % (addr[0], tcp_port)
+      sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+      # TODO(pts): Add timeout on all other operations.
+      sock.settimeout(16)
+      sock.connect((addr[0], tcp_port))
+      send_private = urandom(32)
+      send_public =  curve25519_scalarmult(send_private)
+      key = curve25519_scalarmult(send_private, recv_public2)
+      print >>sys.stderr, "ecplcnw: info: using key-id: %s" % digest32(key).encode("hex")
+      if f is sys.stdin and os.isatty(sys.stdin.fileno()):
+        print >>msgout, "ecplcnw: reading data from stdin..."
+      data = f.read()
+    finally:
+      if f is not sys.stdin:
+        f.close()
+    print >>msgout, "ecplcnw: sending %d bytes of data" % len(data)
+    data = transfer_id2 + data
+    send_data = "".join((
+        HEADER, send_public, chacha20_encrypt(digest32(data) + data, key)))
+    del data  # Save memory.
+    sock.sendall(send_data)
+  else:
+    raise UsageError("unknown command: %s" % argv[1])
+
+
+if __name__ == "__main__":
+  try:
+    sys.exit(main(sys.argv))
+  except UsageError, e:
+    print >>msgout, "ecplcnw: usage error: %s" % e
+    sys.exit(1)
+  except FatalError, e:
+    print >>msgout, "ecplcnw: fatal: %s" % e
+    sys.exit(2)
+  except KeyboardInterrupt, e:
+    print >>msgout, "\necplcnw: interrupted"
+    sys.exit(3)
+
+';exec "$PYTHON" -c "exec __import__(\"os\").getenv(\"PYCODE\")" --argv0="$ARGV0" $CMD "$@"; fi #'

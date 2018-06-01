@@ -9,6 +9,41 @@ computer in many firewall setups.
 
 copystrap contains the following scripts:
 
+* ecplcnw: Uses the local network (wifi or wired) to copy the data. This is
+  the most convenient method, but it has some restrictions: the
+  sender and receiver must be connected to the same network (e.g. wifi
+  router), and the router must be able to forward broadcast UDP packets.
+
+  Abbreviation of: Encrypted Copy using the LoCal NetWork.
+
+  Starting the receiver first is more secure.
+
+  To receive, run any of:
+
+    $ sh ecplcnw receive >OUT
+    $ wget -qO- https://github.com/pts/copystrap/raw/master/ecplcnw | sh >OUT
+    $ curl -Ls  https://github.com/pts/copystrap/raw/master/ecplcnw | sh >OUT
+    $ busybox wget -qO- https://github.com/pts/ecplcnw/raw/master/ecplcnw | busybox sh >OUT
+
+  To send, run any of:
+
+    $ sh ecplcnw send --id TRANSFERIDPREFIX FILENAME
+    $ sh ecplcnw send FILENAME  # Insecure, anyone can decrypt it!
+
+  After the transfer verify that the sender and the receiver both print the
+  same key-id. If they print a diffent key-id, then probably there is an
+  attacker on the network, and the receiver has received data coming from
+  the attacker (rather than the legitimate sender).
+
+  The TRANSFERIDPREFIX is printed by the receiver. Omitting the `--id
+  TRANSFERIDPREFIX' flag is insecure, because then the data will
+  be sent to any single receiver on the same network, and the receiver will
+  be able to decrypt it. Thus a receiver operated by an attacker can get the
+  plaintext.
+
+  The UDP port 48396 is used by the receiver to broadcast UDP packets to.
+  The sender is listening on that UDP port.
+
 * ecptrsh: Uses https://transfer.sh/ to copy the data and store it
   temporarily. Files uploaded to transfer.sh are end-to-end encrypted with
   ephemeral keys.
@@ -38,7 +73,7 @@ copystrap contains the following scripts:
   the data and store it temporarily. Files copied between computers are
   end-to-end encrypted with ephemeral keys.
 
-  Abbreviaton of: Encrypted Copy using a Locally-Mounted Drive.
+  Abbreviaton of: Encrypted Copy using a Locally-Mounted DRive.
 
   Start the receiver first. The default receive locations (DIR) are any
   writable mounted filesystems within /media/ .
