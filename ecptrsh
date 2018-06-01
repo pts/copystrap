@@ -31,7 +31,7 @@ if test "${0%trsh}" = "$0" && test $# = 0; then  # wget -qO- .../ecptrsh | sh
   ARGV0=ecptrsh
   CMD=receive
 fi
-PYCODE='import base64, hashlib, httplib, os, struct, sys, ssl; ssl.wrap_socket; print base64.b64encode(hashlib.sha256(struct.pack(">H", int(os.getenv("HK")))).digest().encode("hex").upper().decode("hex"))'
+PYCODE='import base64, hashlib, httplib, os, socket, struct, sys, ssl; ssl.wrap_socket; print base64.b64encode(hashlib.sha256(struct.pack(">H", int(os.getenv("HK")))).digest().encode("hex").upper().decode("hex"))'
 PYTHON=
 # python2.5 and python2.4 usually don't work because ssl does not exist.
 for PYTHON in python python2 python2.7 python2.6 python2.5 python2.4; do
@@ -405,10 +405,10 @@ def simulate():
     raise ValueError("Invalid send_data.")
   send_public2 = base64.b64decode(match.group(1))
   data_encrypted2 = send_data2[match.end():]
+  if len(data_encrypted2) < 32:
+    raise ValueError("Encrypted data too short.")
   key2 = curve25519_scalarmult(recv_private, send_public2)
   data2 = chacha20_encrypt(data_encrypted2, key2)
-  if len(data2) < 32:
-    raise ValueError("Encrypted data too short.")
   data3 = data2[32:]
   if digest32(data3) != data2[:32]:
     raise ValueError("Corrupt data: digest does not match.")
@@ -444,12 +444,12 @@ def main(argv):
   elif argv[1] in ("receive", "recv"):
     init_msg_tty()
     if len(argv) > 2:
-      raise UsageError("Too many command-line arguments.")
+      raise UsageError("too many command-line arguments")
     recv_private = urandom(32)
     recv_public =  curve25519_scalarmult(recv_private)
     recv_token = upload_to_transfer_sh(recv_public, "r")
     print >>msgout, "ecptrsh: receiver token is: %s" % recv_token
-    print >>msgout, "ecptrsh: info: start `ecptrsh send\x27 on the peer, type the receiver token above there, and look for the sender token it prints"
+    print >>msgout, "ecptrsh: info: start `ecptrsh send\x27 on the sender, type the receiver token above there, and look for the sender token it prints"
     try:
       send_token = prompt_read_line("ecptrsh: Enter sender token: ")
     except EOFError, e:
@@ -478,13 +478,13 @@ def main(argv):
   elif argv[1] == "send":
     init_msg_tty()
     if len(argv) > 3:
-      raise UsageError("Too many command-line arguments.")
+      raise UsageError("too many command-line arguments")
     if len(argv) == 3:
       f = open(argv[2], "rb")
     else:
       f = sys.stdin
     try:
-      print >>msgout, "ecptrsh: info: start `ecptrsh receive\x27 on the peer, and look for the receiver token it prints"
+      print >>msgout, "ecptrsh: info: start `ecptrsh receive\x27 on the receiver, and look for the receiver token it prints"
       try:
         recv_token = prompt_read_line("ecptrsh: Enter receiver token: ")
       except EOFError, e:
@@ -511,10 +511,10 @@ def main(argv):
     else:
       use_fake_transfer_sh()
     if len(argv) > 2:
-      raise UsageError("Too many command-line arguments.")
+      raise UsageError("too many command-line arguments")
     simulate()
   else:
-    raise UsageError("Unknown command: %s" % argv[1])
+    raise UsageError("unknown command: %s" % argv[1])
 
 
 if __name__ == "__main__":
