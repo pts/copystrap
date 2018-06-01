@@ -16,6 +16,12 @@ copystrap contains the following scripts:
 
   Abbreviation of: Encrypted Copy using the LoCal NetWork.
 
+  SECURITY WARNING: This is insecure, because an attacker can receive and
+  decrypt any message. To do so, the attacker listens for UDP broadcast
+  packets sent by the receiver, then sends fake data to the receiver, then
+  starts a fake receiver with the same transfer-id, so the real sender will
+  send the data to the attacker-controlled fake receiver.
+
   Starting the receiver first is more secure.
 
   To receive, run any of:
@@ -29,6 +35,8 @@ copystrap contains the following scripts:
 
     $ sh ecplcnw send --id TRANSFERIDPREFIX FILENAME
     $ sh ecplcnw send FILENAME  # Insecure, anyone can decrypt it!
+
+  How does the sender authenticate the receiver? 
 
   After the transfer verify that the sender and the receiver both print the
   same key-id. If they print a diffent key-id, then probably there is an
