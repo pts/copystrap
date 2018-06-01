@@ -224,6 +224,17 @@ def init_msg_tty():
   msgin = msgout = msgout2
 
 
+def prompt_read_line(prompt):
+  msgout.write(prompt)
+  msgout.flush()
+  line = msgin.readline()
+  if not line:
+    msgout.write("\n")
+    msgout.flush()
+    raise EOFError("EOF when reading reply to prompt.")
+  return line.rstrip("\r\n")
+
+
 class UsageError(ValueError):
   """Raised when problem in argv."""
 
@@ -246,7 +257,7 @@ def get_usage(argv0):
   return (
       "ecplcnw: copy encrypted data to a new computer using the local network\n"
       "This is free software, GNU GPL >=2.0. There is NO WARRANTY. Use at your risk.\n"
-      "Usage: %s send [--id <transfer-id>] [<filename>]\n"
+      "Usage: %s send [--insecure] [--id <transfer-id>] [<filename>]\n"
       "       %s receive [--id <transfer-id>] > <filename>\n"
       ).replace("%s", argv0)
 
@@ -269,13 +280,13 @@ def main(argv):
       del argv[2 : 4]
     if len(argv) > 2:
       raise UsageError("too many command-line arguments")
-    if transfer_id in (None, ""):
-      transfer_id = urandom(32)
-    else:
+    if transfer_id:
       # Repeat it at make it 32 bytes long.
       transfer_id = (transfer_id * ((32 + len(transfer_id) - 1) / len(transfer_id)))[:32]
     recv_private = urandom(32)
     recv_public =  curve25519_scalarmult(recv_private)
+    if not transfer_id:
+      transfer_id = recv_public
     print >>msgout, "ecplcnw: info: transfer-id is: %s" % transfer_id.encode("hex")
     print >>msgout, "ecplcnw: info: start `ecplcnw send --id %s\x27 on the sender" % transfer_id[:4].encode("hex")
 
@@ -329,6 +340,9 @@ def main(argv):
         if len(buf) != 40:
           continue
         send_public2 = buf[8:]
+        key2 = curve25519_scalarmult(recv_private, send_public2)
+        key2_id = digest32(key2).encode("hex")
+        print >>sys.stderr, "ecplcnw: info: using key-id: %s %s" % (key2_id[:8], key2_id[8:])
         buf = []
         while 1:
           # TODO(pts): Do not read too much from untrusted source.
@@ -339,11 +353,12 @@ def main(argv):
         buf = "".join(buf)
       finally:
         sock.close()
+      if buf == "keyidmismatch":
+        print >>sys.stderr, "ecplcnw: the sender decided not to send because of a key-id mismatch; run the sender again"
+        continue
       if len(buf) < 64:
         print >>sys.stderr, "ecplcnw: incoming encrypted data too short"
         continue
-      key2 = curve25519_scalarmult(recv_private, send_public2)
-      print >>sys.stderr, "ecplcnw: info: using key-id: %s" % digest32(key2).encode("hex")
       data2 = chacha20_encrypt(buf, key2)
       del buf
       print >>msgout, "ecplcnw: received %d bytes of data" % (
@@ -361,11 +376,17 @@ def main(argv):
     sys.stdout.flush()
   elif argv[1] == "send":
     init_msg_tty()
+    need_secure = True
+    if len(argv) > 2 and argv[2] == "--insecure":
+      need_secure = False
+      del argv[2]
     if len(argv) > 3 and argv[2] == "--id":
       transfer_id = parse_transfer_id(argv[3])
       del argv[2 : 4]
     if not transfer_id:
       transfer_id = ""
+    if need_secure and len(transfer_id) < 4:
+      raise UsageError("transfer-id --id too short, would be insecure")
     if len(argv) > 3:
       raise UsageError("too many command-line arguments")
     if len(argv) == 3:
@@ -403,6 +424,17 @@ def main(argv):
           sys.stderr.flush()
           time.sleep(0.1)
           continue
+        if len(data) == 74 and data[:8] == HEADER:
+          header, transfer_id2, recv_public2, tcp_port = struct.unpack(">8s32s32sH", data)
+          if ((1024 <= tcp_port <= 65535) and
+              not (need_secure and recv_public2 != transfer_id2) and
+              not transfer_id2.startswith(transfer_id)):
+            if not had_timeout:
+              usock.settimeout(0.1)
+              had_timeout = True
+            sys.stderr.write("-")  # Mismatching transfer-id. Maybe an unrelated receiver on the network.
+            sys.stderr.flush()
+            continue
         if had_timeout:
           sys.stderr.write("\n")
           sys.stderr.flush()
@@ -417,8 +449,8 @@ def main(argv):
         if not (1024 <= tcp_port <= 65535):
           print >>sys.stderr, "ecplcnw: UDP packet from receiver contains bad TCP port"
           continue
-        if not transfer_id2.startswith(transfer_id):
-          print >>sys.stderr, "ecplcnw: UDP packet from receiver contains mismatching transfer-id"
+        if need_secure and recv_public2 != transfer_id2:
+          print >>sys.stderr, "ecplcnw: UDP packet from receiver contains different recv-public and transfer-id, this is insecure"
           continue
         break
       print >>msgout, "ecplcnw: info: using transfer-id: %s" % transfer_id2.encode("hex")
@@ -430,7 +462,18 @@ def main(argv):
       send_private = urandom(32)
       send_public =  curve25519_scalarmult(send_private)
       key = curve25519_scalarmult(send_private, recv_public2)
-      print >>sys.stderr, "ecplcnw: info: using key-id: %s" % digest32(key).encode("hex")
+      key_id = digest32(key).encode("hex")
+      print >>sys.stderr, "ecplcnw: info: using key-id: %s %s" % (key_id[:8], key_id[8:])
+      sock.sendall(HEADER + send_public)
+      if need_secure:
+        try:
+          yes = prompt_read_line("ecplcnw: check the first 8 hex digits of key-id above carefully with what the receiver has printed, and type yes if they are the same: ")
+        except KeyboardInterrupt:
+          sock.sendall("keyidmismatch")
+          raise
+        if yes != "yes":
+          sock.sendall("keyidmismatch")
+          raise FatalError("key-id did not match, aborting because sending would insecure; to send, run the sender again")
       if f is sys.stdin and os.isatty(sys.stdin.fileno()):
         print >>msgout, "ecplcnw: reading data from stdin..."
       data = f.read()
@@ -439,10 +482,8 @@ def main(argv):
         f.close()
     print >>msgout, "ecplcnw: sending %d bytes of data" % len(data)
     data = transfer_id2 + data
-    send_data = "".join((
-        HEADER, send_public, chacha20_encrypt(digest32(data) + data, key)))
+    sock.sendall(chacha20_encrypt(digest32(data) + data, key))
     del data  # Save memory.
-    sock.sendall(send_data)
   else:
     raise UsageError("unknown command: %s" % argv[1])
 

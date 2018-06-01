@@ -16,13 +16,13 @@ copystrap contains the following scripts:
 
   Abbreviation of: Encrypted Copy using the LoCal NetWork.
 
-  SECURITY WARNING: This is insecure, because an attacker can receive and
-  decrypt any message. To do so, the attacker listens for UDP broadcast
-  packets sent by the receiver, then sends fake data to the receiver, then
-  starts a fake receiver with the same transfer-id, so the real sender will
-  send the data to the attacker-controlled fake receiver.
-
-  Starting the receiver first is more secure.
+  Security notice: When the receiver asks you to compare the key-id, please
+  compare (at least 8 hex digits) that the same key-id is displayed by the
+  sender and the receiver. If you reply `yes' without doing the comparison,
+  then an attacker on the local network will be able to received and decrypt
+  the data. Also don't use the data in the receiver before comparison. If
+  you use it, then you may be using data sent by an attacker (rather than
+  the sender).
 
   To receive, run any of:
 
@@ -35,19 +35,6 @@ copystrap contains the following scripts:
 
     $ sh ecplcnw send --id TRANSFERIDPREFIX FILENAME
     $ sh ecplcnw send FILENAME  # Insecure, anyone can decrypt it!
-
-  How does the sender authenticate the receiver? 
-
-  After the transfer verify that the sender and the receiver both print the
-  same key-id. If they print a diffent key-id, then probably there is an
-  attacker on the network, and the receiver has received data coming from
-  the attacker (rather than the legitimate sender).
-
-  The TRANSFERIDPREFIX is printed by the receiver. Omitting the `--id
-  TRANSFERIDPREFIX' flag is insecure, because then the data will
-  be sent to any single receiver on the same network, and the receiver will
-  be able to decrypt it. Thus a receiver operated by an attacker can get the
-  plaintext.
 
   The UDP port 48396 is used by the receiver to broadcast UDP packets to.
   The sender is listening on that UDP port.
