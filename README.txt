@@ -2,10 +2,15 @@ copystrap: copy encrypted data to a new computer
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 copystrap is a collection of shell and Python scripts for Unix to
 conveniently copy data in an end-to-end encrypted way to a newly installed
-computer. The reason why copystrap is more convenient than rsync or scp is
-that rsync and scp need working SSH client credentials (e.g. private keys or
-passwords) on the target computer, and they may also need an intermediate
-computer in many firewall setups.
+computer. If scp or rsync works conveniently between the computers, then use
+them instead of copystrap (more specific recommendations here:
+http://ptspts.blogspot.com/2018/06/how-to-copy-files-securely-between.html).
+
+In some setups it's not feasible to install the OpenSSH server, or the
+direct TCP connection between the computers is prevented by firewalls, or
+it's not convenient to copy the working SSH client credetials (e.g. private
+keys or passwords) around first. In this case the copystrap tools become
+useful.
 
 copystrap contains the following scripts:
 
