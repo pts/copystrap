@@ -73,7 +73,8 @@ del __ssl
 URL_RE = re.compile(r"([a-z0-9]+)://([^/:@?#]+)(?::(\d+))?")
 
 
-def send_http_request(url, data=None, put_data=None, timeout=None):
+def send_http_request(url, data=None, put_data=None, timeout=None,
+                      extra_headers=None):
   """Return a httplib.HTTPResponse object with attributes
   .status, .reason, .getheaders(), .getheader(...), .read()."""
   match = URL_RE.match(url)
@@ -95,6 +96,9 @@ def send_http_request(url, data=None, put_data=None, timeout=None):
   else:
     hc = hc_cls(ipaddr, port, timeout=timeout)
   headers = {"host": host}
+  if extra_headers:
+    for key, value in extra_headers.iteritems():
+      headers[key.lower()] = str(value)
   if put_data is not None:
     headers.setdefault("content-type", "application/octet-stream")
     if data is not None:
@@ -124,7 +128,10 @@ def upload_to_transfer_sh(data, filename="t", host="transfer.sh"):
   # TODO(pts): Escape filename.
   # TODO(pts): Escape host?
   hr = send_http_request(
-      "https://%s/%s" % (host, filename), put_data=data)
+      "https://%s/%s" % (host, filename), put_data=data, extra_headers={
+          "Max-Downloads": 1,
+          "Max-Days": 1,
+       })
   try:
     if hr.status != 200:
       raise ValueError("HTTP request failed: %s %s" % (hr.status, hr.reason))
